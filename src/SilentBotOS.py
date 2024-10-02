@@ -6,12 +6,13 @@ from botpy.message import C2CMessage, GroupMessage, Message
 from typing import Union
 import shlex
 from random import randint
+from log import *
 
 from __init__ import *
 BotMessage = Union[Message, C2CMessage, GroupMessage]
 
 class AtEvent:
-    def __init__(self, message: BotMessage):
+    def __init__(self, message: BotMessage) -> None:
         self.message = message
         self.startime = time_conversion(message.timestamp)
 
@@ -93,8 +94,9 @@ class AtEvent:
         return {'content': {'message': self.message, 'command': self.command, 'params': self.params, 'processalControl': commandContent['processalControl'], \
                 'function': commandContent['function'], 'of': commandContent['of']}, 'msgMOI': self.msgMOI, 'msgGOI': self.msgGOI, 'time': self.startime}
 
+
 class SessionProcess:
-    def __init__(self, atEvent):
+    def __init__(self, atEvent: dict) -> None:
         self.pid = ULID()
         self.GOI = atEvent['msgGOI']
         self.MOI = atEvent['msgMOI']
@@ -142,12 +144,25 @@ def createAtEvent(message: BotMessage) -> None | dict:
         case Message():
             ...
 
-def createReturnEvent(message: dict) -> dict:
-    ...
+
+def createReturnEvent(messageResult: dict, content: str) -> dict:
+    return {'time': time_conversion(message.timestamp), 'content': content}
+
+
+def replyMessage(message: BotMessage, content: str, atEvent: dict, sequence=-1) -> None:
+    if sequence == -1:
+        SilentBotOS.MessageSequence += 1
+        sequence = SilentBotOS.MessageSequence
+
+    messageResult = await message.reply(content=content, msg_seq=sequence)
+    returnEvent = createReturnEvent(messageResult, content)
+    LogWrite(atEvent)
+    LogWrite(atEvent, returnEvent)
 
 
 class SilentBotOS:
     _instance = None
+    MessageSequence = 0
 
     PidRunning = {}
 
@@ -159,7 +174,7 @@ class SilentBotOS:
     SessionManyTwoPid = {}
     SessionMember = {}
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args, **kwargs) -> 'SilentBotOS':
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -244,7 +259,7 @@ class SilentBotOS:
             return
 
         if not processalControl and atEvent['content']['of'] is None:
-            await SilentBotOS.fastParse(atEvent)
+            print(await SilentBotOS.fastParse(atEvent))
             return
         
         if atEvent['content']['of'] is None:
