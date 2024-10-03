@@ -117,39 +117,81 @@ class SessionProcess:
                 UpdateDict(SilentBotOS.SessionOnePid, self.MOI, self.pid)
                 UpdateDict(SilentBotOS.CommandPid, self.command, self.pid)
             case 2:
+                if type(atEvent['content']['message']) == C2CMessage:
+                    self.convertedInto(1, atEvent)
+                    return
                 UpdateDict(SilentBotOS.SessionTwoPid, self.GOI, self.pid)
                 UpdateDict(SilentBotOS.CommandPid, self.command, self.pid)
             case 2.5:
+                if type(atEvent['content']['message']) == C2CMessage:
+                    self.convertedInto(1, atEvent)
+                    return
                 SilentBotOS.SessionMember[self.MOI] = {self.pid}
                 UpdateDict(SilentBotOS.SessionManyTwoPid, self.GOI, self.pid)
                 UpdateDict(SilentBotOS.CommandPid, self.command, self.pid)
 
 
+    def release(self) -> None:
+        """
+        释放进程资源
+        """
+        del self.dataqueue, self.datastack
+        self.dictionary.clear()
+        self.List.clear()
+
+        pid = self.pid
+        # 根据会话类型清理关联的映射
+        if self.sessionType == 1:
+            SilentBotOS.SessionOnePid[self.MOI].discard(pid)
+        elif self.sessionType == 2:
+            SilentBotOS.SessionTwoPid[self.GOI].discard(pid)
+        elif self.sessionType == 2.5:
+            SilentBotOS.SessionMember[self.MOI].discard(pid)
+            SilentBotOS.SessionManyTwoPid[self.GOI].discard(pid)
+
+        # 清理命令到进程的映射
+        SilentBotOS.CommandPid[self.command].discard(pid)
+
+
+    def convertedInto(self, SessionType: int, atEvent: dict) -> None:
+        """
+        match self.sessionType:
+            case 1:
+                SilentBotOS.SessionOnePid[self.MOI].discard(pid)
+            case 2:
+                SilentBotOS.SessionTwoPid[self.GOI].discard(pid)
+            case 2.5:
+                SilentBotOS.SessionMember[self.MOI].discard(pid)
+                SilentBotOS.SessionManyTwoPid[self.GOI].discard(pid)
+        """
+        MOI = atEvent['msgMOI']
+        GOI = atEvent['msgGOI']
+        match SessionType:
+            case 1:
+                UpdateDict(SilentBotOS.SessionOnePid, MOI, self.pid)
+            case 2:
+                UpdateDict(SilentBotOS.SessionTwoPid, GOI, self.pid)
+            case 2.5:
+                SilentBotOS.SessionMember[MOI] = {self.pid}
+                UpdateDict(SilentBotOS.SessionManyTwoPid, ;GOI, self.pid)
+            UpdateDict(SilentBotOS.CommandPid, self.command, self.pid)
+            self.sessionType = SessionType
+
+
 def createAtEvent(message: BotMessage) -> None | dict:
-    match message:
-        case GroupMessage():
-            atEvent = AtEvent(message)
-            atEvent.parseCommand()
-            result = atEvent.generatedAtEvent()
-            del atEvent
-            return result
-
-        case C2CMessage():
-            atEvent = AtEvent(message)
-            atEvent.parseCommand()
-            result = atEvent.generatedAtEvent()
-            del atEvent
-            return result
-
-        case Message():
-            ...
+    atEvent = AtEvent(message)
+    atEvent.parseCommand()
+    result = atEvent.generatedAtEvent()
+    del atEvent
+    return result
 
 
 def createReturnEvent(messageResult: dict, content: str) -> dict:
     return {'time': time_conversion(message.timestamp), 'content': content}
 
 
-def replyMessage(message: BotMessage, content: str, atEvent: dict, sequence=-1) -> None:
+async def replyMessage(content: str, atEvent: dict, sequence=-1) -> None:
+    message = atEvent['content']['message']
     if sequence == -1:
         SilentBotOS.MessageSequence += 1
         sequence = SilentBotOS.MessageSequence
@@ -184,14 +226,12 @@ class SilentBotOS:
     async def fastParse(atEvent: dict) -> None:
         message = atEvent['content']['message']
         function = atEvent['content']['function']
-        messageResult = await message.reply(content=function(atEvent), msg_seq=randint(2, 4))
-
-        return messageResult
+        await replyMessage(function(atEvent), atEvent)
 
 
     @staticmethod
     def findProcess(atEvent: dict) -> str | list[str]:
-        if atEvent['content']['of'] is None:
+        if atEvent['content']['of'] is None: # 关联指令检测
             command = atEvent['content']['command']
         else:
             command = atEvent['content']['of']
@@ -212,7 +252,6 @@ class SilentBotOS:
 
                 except KeyError:
                     return [SessionProcess(atEvent).pid]
-
 
             case 2:
                 if messageType == C2CMessage:
@@ -252,20 +291,24 @@ class SilentBotOS:
 
 
     async def uploadAtEvent(self, atEvent: dict) -> None:
-        try:
+        try:    #atEvent是否为错误信息
             processalControl = atEvent['content']['processalControl']
         except Exception:
             print(atEvent)
             return
-
+        # 检测不是会话控制状态与关联指令
         if not processalControl and atEvent['content']['of'] is None:
             print(await SilentBotOS.fastParse(atEvent))
             return
-        
-        if atEvent['content']['of'] is None:
+
+        # 是否为关联指令
+        if atEvent['content']['of'] is None or processalControl:
             command = atEvent['content']['command']
             commandContent = Commands.__members__[command].value
         else:
+            if processalControl:
+                ...
+                return
             command = atEvent['content']['of']
             commandContent = Commands.__members__[command].value
         sessionType = commandContent['processalControl']
@@ -286,18 +329,32 @@ class SilentBotOS:
                     if atEvent['content']['params'][-1] == '+':
                         del atEvent['content']['params'][-1]
                         process = SessionProcess(atEvent)
-                        await message.reply(content=f'{function(atEvent, process)}\n\nPid:{process.pid}', msg_seq=12)
+                        await replyMessage(f'{function(atEvent, process)}\n\nPid:{process.pid}', atEvent)
                         return
                 except IndexError:
-                    ...
+                    pass
 
                 if process == "error":  # 添加对错误情况的检查
                     ...
                 elif len(process) == 1:
                     process = SilentBotOS.PidRunning[process[0]]
                 else:
-                    attention = ...
-                    await message.reply(content=attention)
+                    attention = "出现了多个可用进程, 请使用/switching <pid> 去选择进程\n\n"
+                    for i in process:
+                        attention += f'{i}\n'
+                    await replyMessage(attention, atEvent)
                     return
 
-                await message.reply(content=f'{function(atEvent, process)}\n\nPid:{process.pid}', msg_seq=12)
+                await replyMessage(f'{function(atEvent, process)}\n\nPid:{process.pid}', atEvent)
+
+
+    def releaseProcess(pid) -> None:
+        try:
+            process = SilentBotOS.PidRunning[pid]
+        except KeyError:
+            print("invited pid")
+            return
+
+        process.release()
+        SilentBotOS.PidRunning.discard(pid)
+        del process
