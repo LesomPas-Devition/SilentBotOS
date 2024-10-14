@@ -9,10 +9,13 @@ class LogWrite:
             cls._i = super().__new__(cls)
         return cls._i
 
-    def __init__(self, atEvent, returnEvent=None, error=None):
+    def __init__(self, atEvent=None, returnEvent=None, error=None):
         self.atEvent = atEvent
         self.returnEvent = returnEvent
         self.error = error
+
+        if atEvent is None:
+            self.clearSign()
 
         if returnEvent is None:
             if self.error is None:
@@ -58,7 +61,7 @@ class LogWrite:
 
         with open("./log.txt", "a") as l:
             l.write(first + n)
-            l.write(f"      Information: {atEvent['message'].content}" + n)
+            l.write(f"      Information: {self.atEvent['content']['message'].content}" + n)
 
 
     def logReplyNormal(self):
@@ -74,3 +77,8 @@ class LogWrite:
                 errorlist += f"{i} "
             l.write(f"reply: [{self.returnEvent['time']}] Error[{errorlist}]" + n)
             l.write(f"      {self.returnEvent['information']}" + n)
+
+
+    def clearSign(self):
+        with open("./log.txt", "a") as l:
+            l.write(f"clear: [{self._getTime()}] Normal")
