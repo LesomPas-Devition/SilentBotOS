@@ -1,6 +1,8 @@
 
 from typing import Union
 from ulid import ULID
+from botpy.message import C2CMessage, GroupMessage, Message
+import json
 
 class DRVCommands: # Determined ReturnValue Commands
     @staticmethod
@@ -152,30 +154,32 @@ class SignCommands:
 class DirectedCommands:
     @staticmethod
     def count(atEvent: dict, process: 'SessionProcess'):
-        if process.dataqueue.empty():
-            process.dataqueue.put(1)
+        queue = process.queue
+        if queue.empty():
+            queue.put(1)
             return "1"
-        num = process.dataqueue.get()
-        process.dataqueue.put(num + 1)
+        num = queue.get()
+        queue.put(num + 1)
+        process.save(queue=queue)
         return str(num + 1)
 
     @staticmethod
     def lessen(atEvent: dict, process: 'SessionProcess'):
-        if process.dataqueue.empty():
-            process.dataqueue.put(0)
+        queue = process.queue
+        if queue.empty():
+            queue.put(0)
             return "0"
-        num = process.dataqueue.get()
-        process.dataqueue.put(num - 1)
+        num = queue.get()
+        queue.put(num - 1)
+        process.save(queue=queue)
         return str(num - 1)
 
 
 class SystemCommands:
     @staticmethod
-    def join(atEvent):  # for SessionType is 1 or 3
-        ...
-
-    @staticmethod
     def switching(atEvent: dict):  # for SessionType is 2.5
+        if type(atEvent["content"]["message"]) == C2CMessage:
+            return "私信环境中不可使用/switching"
         from SilentBotOS import SilentBotOS, SessionProcess
         MOI = atEvent['msgMOI']
         pid = atEvent['content']['params'][0]
@@ -183,7 +187,24 @@ class SystemCommands:
             process = SilentBotOS.PidRunning[ULID.from_str(pid)]
         except KeyError:
             return "输入内容有误或者进程不存在"
-        if process.sessionType == 2.5:
-            SilentBotOS.SessionMember[MOI] = {ULID.from_str(pid)}
-            return "切换成功"
-        return "会话空间类型不符"
+        # if process.sessionType == 2.5:
+        SilentBotOS.SessionMember[MOI] = {ULID.from_str(pid)}
+        return "切换成功"
+
+    @staticmethod
+    def allAvailableProcesses(atEvent: dict) -> str:
+
+        def _print(dictionary, header: str) -> str:
+            result = f"{header}\n"
+            for i in dictionary.values():
+                result += (str(i) + "\n")
+            result += "\n"
+            return result
+
+        from SilentBotOS import SilentBotOS
+        a = _print(SilentBotOS.SessionOnePid, "Session 1:")
+        commands = _print(SilentBotOS.CommandPid, "Commands:")
+        b = _print(SilentBotOS.SessionTwoPid, "Session 2:")
+        c = _print(SilentBotOS.SessionManyTwoPid, "Session 2.5:")
+        d = _print(SilentBotOS.SessionMember, "Personal Session")
+        return a + b + c + d + commands
