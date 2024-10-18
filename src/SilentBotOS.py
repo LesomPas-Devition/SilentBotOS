@@ -29,27 +29,28 @@ class AtEvent:
                 self.msgGOI = None 
             case Message():
                 pass
+        self.initialAtEvent = {'content': {'message': self.message}, 'msgMOI': self.msgMOI, 'msgGOI': self.msgGOI, 'time': self.startime}
 
 
     def parseCommand(self) -> None:
         """
         分离命令和参数
 
-        args:
-            command_string: robot_content
-                For example: /repeat a b-> [repeat, [a, b]]
+        args: command_string: robot_content
+                 - For example: /repeat a b-> [repeat, [a, b]]
 
-        return:
-            None
+        return: None
 
-        raise:
-            ContentSyntaxError: 命令没以斜杠开头或者不匹配
+        raise: 
+           - ContentSyntaxError: 命令没以斜杠开头
+           - UnknownValueError: 引号不匹配, 有可能其他的错误也会触发
         """
         command_string = self.message.content
         command_string = command_string[command_string.find('/'):]
         # 检查命令是否以'/'开头
         if not command_string.startswith('/'):
-            print("Error: Command must start with '/'")
+            LogWrite(atEvent=self.initialAtEvent, error='ContentSyntaxError')
+            return
 
         try:
             # 使用shlex.split来正确处理引号
@@ -60,40 +61,37 @@ class AtEvent:
             self.command = parts.pop(0)[1:]
             self.params = parts
 
-        except ValueError as e:
-            # 处理引号不匹配等错误
-            print(f"Error parsing command: {e}")
+        except ValueError:
+            LogWrite(atEvent=self.initialAtEvent, error='UnknownValueError')
 
 
     def generatedAtEvent(self) -> str | dict:
         """
         检查所有参数, 生成AtEvent
         
-        args:
-            from message and parsed command
+        args: from message and parsed command
 
-        return:
-            AtEvent: 含有指令运行的必要信息 (dict)
+        return: AtEvent: 含有指令运行的必要信息 (dict)
 
         raise:
-            noFindCommandError: 没有找到命令, 可能的原因有命令没有注册或注册不成功
-            paramsNumError: 参数的数量不符合注册命令的参数数量区间范围
+           - NoFindCommandError: 没有找到命令, 可能的原因有命令没有注册或注册不成功
+           - ParamsNumError: 参数的数量不符合注册命令的参数数量区间范围
+           - InstructionConfigurationError: 命令配置错误, 触发此错误的唯一条件就是关联指令与会话控制一起配置
         """
-        atEvent = {'content': {'message': self.message}, 'msgMOI': self.msgMOI, 'msgGOI': self.msgGOI, 'time': self.startime}
         if self.command in commandnames:
             commandContent = Commands.__members__[self.command].value
         else:
-            LogWrite(atEvent=atEvent, error='NoFindCommandError')
-            return 'NoFindCommandError'
+            LogWrite(atEvent=self.initialAtEvent, error='NoFindCommandError')
+            return
 
         # check params num
         interval = commandContent['params']
         if not (len(interval) == 1 and len(self.params) == interval[0] or \
                 len(interval) == 2 and interval[0] <= len(self.params) <= interval[1]):
-            LogWrite(atEvent=atEvent, error='ParamsNumError')
+            LogWrite(atEvent=self.initialAtEvent, error='ParamsNumError')
             return
         if commandContent['of'] is not None and commandContent['processalControl']:
-            LogWrite(atEvent=atEvent, error='InstructionConfugurationError')
+            LogWrite(atEvent=self.initialAtEvent, error='InstructionConfigurationError')
             return
 
         return {'content': {'message': self.message, 'command': self.command, 'params': self.params, 'processalControl': commandContent['processalControl'], \
@@ -117,23 +115,18 @@ class SessionProcess:
         self.sessionType = commandContent['processalControl']
 
         SilentBotOS.PidRunning[self.pid] = self
+        if type(atEvent['content']['message']) == C2CMessage:
+            self.convertedInto(1, atEvent)
+            return
         match self.sessionType:
             case 1:
                 UpdateDict(SilentBotOS.SessionOnePid, self.MOI, self.pid)
-                UpdateDict(SilentBotOS.CommandPid, self.command, self.pid)
             case 2:
-                if type(atEvent['content']['message']) == C2CMessage:
-                    self.convertedInto(1, atEvent)
-                    return
                 UpdateDict(SilentBotOS.SessionTwoPid, self.GOI, self.pid)
-                UpdateDict(SilentBotOS.CommandPid, self.command, self.pid)
             case 2.5:
-                if type(atEvent['content']['message']) == C2CMessage:
-                    self.convertedInto(1, atEvent)
-                    return
                 SilentBotOS.SessionMember[self.MOI] = {self.pid}
                 UpdateDict(SilentBotOS.SessionManyTwoPid, self.GOI, self.pid)
-                UpdateDict(SilentBotOS.CommandPid, self.command, self.pid)
+        UpdateDict(SilentBotOS.CommandPid, self.command, self.pid)
 
 
     def release(self) -> None:
@@ -172,16 +165,6 @@ class SessionProcess:
 
 
     def convertedInto(self, SessionType: int, atEvent: dict) -> None:
-        """
-        match self.sessionType:
-            case 1:
-                SilentBotOS.SessionOnePid[self.MOI].discard(pid)
-            case 2:
-                SilentBotOS.SessionTwoPid[self.GOI].discard(pid)
-            case 2.5:
-                SilentBotOS.SessionMember[self.MOI].discard(pid)
-                SilentBotOS.SessionManyTwoid[self.GOI].discard(pid)
-        """
         MOI = atEvent['msgMOI']
         GOI = atEvent['msgGOI']
         match SessionType:
@@ -234,27 +217,33 @@ def createAtEvent(message: BotMessage) -> None | dict:
     return result
 
 
-def createReturnEvent(messageResult: dict, content: str) -> dict:
+def createReturnEvent(messageResult: dict, content: str, atEvent: dict) -> dict:
+    if messageResult is None:
+        LogWrite(atEvent=atEvent, error='MessageResultLoadError')
+        return {'time': atEvent['time'], 'information': atEvent['content']['message'].content}
     return {'time': time_conversion(messageResult['timestamp']), 'information': content}
 
 
 async def replyMessage(content: str, atEvent: dict, sequence=-1) -> None:
     message = atEvent['content']['message']
     if sequence == -1:
-        SilentBotOS.MessageSequence += 1
+        SilentBotOS.MessageSequence = SilentBotOS.MessageSequence % (SilentBotOS.SequenceFrequencyDomain[1] - SilentBotOS.SequenceFrequencyDomain[0] + 1) \
+                                                                  + SilentBotOS.SequenceFrequencyDomain[0]
         sequence = SilentBotOS.MessageSequence
 
     messageResult = await message.reply(content=content, msg_seq=sequence)
-    returnEvent = createReturnEvent(messageResult, content)
+    returnEvent = createReturnEvent(messageResult, content, atEvent)
     LogWrite(atEvent)
     LogWrite(atEvent, returnEvent)
 
 
 class SilentBotOS:
     _instance = None
-    MessageSequence = 0
 
-    ProcessRecoveryTime = 20
+    SequenceFrequencyDomain = (0, 100)
+    MessageSequence = SilentBotOS.SequenceFrequencyDomain[1] - SilentBotOS.SequenceFrequencyDomain[0] + 1
+
+    ProcessRecoveryTime = 300
     ProcessLastCallTime = {}
 
     PidRunning = {}
@@ -281,75 +270,54 @@ class SilentBotOS:
 
 
     @staticmethod
-    def findProcess(atEvent: dict) -> str | list[str]:
-        if atEvent['content']['of'] is None: # 关联指令检测
-            command = atEvent['content']['command']
-        else:
-            command = atEvent['content']['of']
+    def findProcess(atEvent: dict) -> str | list[ULID]:
+        """
+        根据atEvent查找或生成进程
+        
+        arg: atEvent
+        return: SessionProcess | list[ULID]
+        """
+        command = atEvent['content']['command'] if (p := atEvent['content']['of']) is None else p # 关联指令检测
         MOI = atEvent['msgMOI']
         GOI = atEvent['msgGOI']
         messageType = type(atEvent['content']['message'])
-        commandContent = Commands.__members__[command].value
-        sessionType = commandContent['processalControl']
+        sessionType = Commands.__members__[command].value['processalControl']
 
-        def _sessionOneFind(MOI, command):
+        def _Intersection(set1, set2, key1, key2) -> list | SessionProcess:
+            try: return list(set1[key1] & set2[key2])
+            except KeyError: return None
+
+        def _ProcessIntersection(set1, set2, key1, key2, returnlist=False, atEvent=None) -> ULID | list:
             try:
-                processesA = SilentBotOS.SessionOnePid[MOI]
-                processesB = SilentBotOS.CommandPid[command]
-
-                process = processesA & processesB
-                return [list(process)[0]]
-
-            except KeyError:
-                return [SessionProcess(atEvent).pid]
+                if (result := _Intersection(set1, set2, key1, key2)) is None:
+                    return SessionProcess(atEvent) if not returnlist else [SessionProcess(atEvent)]
+                return SilentBotOS.PidRunning(result[0]) if not returnlist else result
+            except IndexError: pass
 
         match sessionType:
             case 1:
-                return _sessionOneFind(MOI, command)
+                return _ProcessIntersection(SilentBotOS.SessionOnePid, SilentBotOS.CommandPid, MOI, command, atEvent=atEvent)
             case 2:
                 if messageType == C2CMessage:
-                   return _sessionOneFind(MOI, command)
-                try:
-                    processesA = SilentBotOS.SessionTwoPid[GOI]
-                    processesB = SilentBotOS.CommandPid[command]
-
-                    process = processesA & processesB
-                    return [list(process)[0].pid]
-
-                except KeyError:
-                    return [SessionProcess(atEvent).pid]
-
+                   return _ProcessIntersection(SilentBotOS.SessionOnePid, SilentBotOS.CommandPid, MOI, command, atEvent=atEvent)
+                return _ProcessIntersection(SilentBotOS.SessionTwoPid, SilentBotOS.CommandPid, GOI, command, atEvent=atEvent)
             case 2.5:
                 if messageType == C2CMessage:
-                    return _sessionOneFind(MOI, command)
+                    return _ProcessIntersection(SilentBotOS.SessionOnePid, SilentBotOS.CommandPid, MOI, command, returnlist=True, atEvent=atEvent)
                 try:
-                    processesA = SilentBotOS.SessionManyTwoPid[GOI]
-                    processesB = SilentBotOS.SessionMember[MOI]
-
-                    process = list(processesA & processesB)[0]
-
+                    process = _Intersection(SilentBotOS.SessionManyTwoPid, SilentBotOS.SessionMember, GOI, MOI)[0]
                     if SilentBotOS.PidRunning[process].command == command:
                         return [process]
-                except Exception as e:
-                    print(e)
+                except Exception: pass
 
-                try:
-                    processesA = SilentBotOS.SessionManyTwoPid[GOI]
-                    processesB = SilentBotOS.CommandPid[command]
-
-                    process = list(processesA & processesB)
-                    return process
-                except KeyError:
-                    return [SessionProcess(atEvent).pid]
+                return _ProcessIntersection(SilentBotOS.SessionManyTwoPid, SilentBotOS.CommandPid, GOI, command, returnlist=True, atEvent=atEvent)
 
 
     async def uploadAtEvent(self, atEvent: dict) -> None:
         SilentBotOS.release()
         try:    #atEvent是否为错误信息
             processalControl = atEvent['content']['processalControl']
-        except Exception:
-            print(f"Error: {atEvent}")
-            return
+        except Exception: return
         # 检测不是会话控制状态与关联指令
         if not processalControl and atEvent['content']['of'] is None:
             await SilentBotOS.fastParse(atEvent)
@@ -357,9 +325,6 @@ class SilentBotOS:
 
         # 是否为关联指令
         if atEvent['content']['of'] is not None and not processalControl:
-            if processalControl:
-                LogWrite(atEvent=atEvent, error='InstructionConfugurationError')
-                return
             command = atEvent['content']['of']
             commandContent = Commands.__members__[command].value
         else:
@@ -371,10 +336,8 @@ class SilentBotOS:
         message = atEvent['content']['message']
 
         match sessionType:
-            case 1:
-                process = SilentBotOS.PidRunning[SilentBotOS.findProcess(atEvent)[0]]
-            case 2:
-                process = SilentBotOS.PidRunning[SilentBotOS.findProcess(atEvent)[0]]
+            case 1 | 2:
+                process = SilentBotOS.findProcess(atEvent)
             case 2.5:
                 process = SilentBotOS.findProcess(atEvent)
                 try:
@@ -386,19 +349,15 @@ class SilentBotOS:
                         process = SessionProcess(atEvent)
                         await replyMessage(f'{function(atEvent, process)}\n\nPid:{process.pid}', atEvent)
                         return
-                except IndexError:
-                    pass
+                except IndexError: pass
 
-                if process == "error":  # 添加对错误情况的检查
-                    ...
-                elif len(process) == 1:
-                    process = SilentBotOS.PidRunning[process[0]]
-                else:
+                if len(process) != 1:
                     attention = "出现了多个可用进程, 请使用/switching <pid> 去选择进程\n\n"
-                    for i in process:
-                        attention += f'{i}\n'
+                    for i in process: attention += f'{i}\n'
                     await replyMessage(attention, atEvent)
                     return
+
+                process = SilentBotOS.PidRunning[process[0]]
 
         await replyMessage(f'{function(atEvent, process)}\n\nPid:{process.pid}', atEvent)
 
@@ -407,9 +366,7 @@ class SilentBotOS:
         def _releaseProcess(cls, pid) -> None:
             try:
                 process = cls.PidRunning[pid]
-            except KeyError:
-                print("invited pid")
-                return
+            except KeyError: return
 
             process.release()
             del cls.PidRunning[pid]
