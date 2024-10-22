@@ -19,6 +19,7 @@ class AtEvent:
         self.command = ''
         self.params = []
         self.processalControl = False
+        self.error = None
 
         match self.message:
             case GroupMessage():
@@ -50,8 +51,7 @@ class AtEvent:
         # 检查命令是否以'/'开头
         if not command_string.startswith('/'):
             LogWrite(atEvent=self.initialAtEvent, error='ContentSyntaxError')
-            return
-
+            self.error = 'ContentSyntaxError'
         try:
             # 使用shlex.split来正确处理引号
             parts = shlex.split(command_string)
@@ -63,6 +63,7 @@ class AtEvent:
 
         except ValueError:
             LogWrite(atEvent=self.initialAtEvent, error='UnknownValueError')
+            self.error ='UnknownValueError'
 
 
     def generatedAtEvent(self) -> str | dict:
@@ -71,28 +72,39 @@ class AtEvent:
         
         args: from message and parsed command
 
-        return: AtEvent: 含有指令运行的必要信息 (dict)
+        return: AtEvent: 含有指令运行的必要信息 (dict) 或者错误内容 (str)
 
         raise:
            - NoFindCommandError: 没有找到命令, 可能的原因有命令没有注册或注册不成功
            - ParamsNumError: 参数的数量不符合注册命令的参数数量区间范围
            - InstructionConfigurationError: 命令配置错误, 触发此错误的唯一条件就是关联指令与会话控制一起配置
         """
+        if self.error is not None:
+            return self.error
         if self.command in commandnames:
             commandContent = Commands.__members__[self.command].value
         else:
             LogWrite(atEvent=self.initialAtEvent, error='NoFindCommandError')
-            return
+            return 'NoFindCommandError'
 
         # check params num
         interval = commandContent['params']
-        if not (len(interval) == 1 and len(self.params) == interval[0] or \
-                len(interval) == 2 and interval[0] <= len(self.params) <= interval[1]):
-            LogWrite(atEvent=self.initialAtEvent, error='ParamsNumError')
-            return
+        if len(self.params) == 1 and self.params[0] == '-h':
+            self.params = 'helpmode'
+        else:
+            flag = False
+            if len(interval) == 1:
+                flag = len(self.params) == interval[0]
+            elif len(interval) == 2:
+                flag = interval[0] <= len(self.params) <= interval[1]
+            if not flag:
+                LogWrite(atEvent=self.initialAtEvent, error='ParamsNumError')
+                self.params = (interval, self.params)
+                return 'ParamsNumError'
+    
         if commandContent['of'] is not None and commandContent['processalControl']:
             LogWrite(atEvent=self.initialAtEvent, error='InstructionConfigurationError')
-            return
+            return 'InstructionConfigurationError'
 
         return {'content': {'message': self.message, 'command': self.command, 'params': self.params, 'processalControl': commandContent['processalControl'], \
                 'function': commandContent['function'], 'of': commandContent['of']}, 'msgMOI': self.msgMOI, 'msgGOI': self.msgGOI, 'time': self.startime}
@@ -240,8 +252,8 @@ async def replyMessage(content: str, atEvent: dict, sequence=-1) -> None:
 class SilentBotOS:
     _instance = None
 
-    SequenceFrequencyDomain = (0, 100)
-    MessageSequence = SilentBotOS.SequenceFrequencyDomain[1] - SilentBotOS.SequenceFrequencyDomain[0] + 1
+    SequenceFrequencyDomain = (101, 200)
+    MessageSequence = SequenceFrequencyDomain[1] - SequenceFrequencyDomain[0] + 1
 
     ProcessRecoveryTime = 300
     ProcessLastCallTime = {}
@@ -313,11 +325,11 @@ class SilentBotOS:
                 return _ProcessIntersection(SilentBotOS.SessionManyTwoPid, SilentBotOS.CommandPid, GOI, command, returnlist=True, atEvent=atEvent)
 
 
-    async def uploadAtEvent(self, atEvent: dict) -> None:
+    async def uploadAtEvent(self, atEvent: dict | str) -> None:
         SilentBotOS.release()
-        try:    #atEvent是否为错误信息
-            processalControl = atEvent['content']['processalControl']
-        except Exception: return
+        if type(atEvent) == str:    #atEvent是否为错误信息
+            return atEvent
+        processalControl = atEvent['content']['processalControl']
         # 检测不是会话控制状态与关联指令
         if not processalControl and atEvent['content']['of'] is None:
             await SilentBotOS.fastParse(atEvent)
@@ -357,7 +369,7 @@ class SilentBotOS:
                     await replyMessage(attention, atEvent)
                     return
 
-                process = SilentBotOS.PidRunning[process[0]]
+                process = SilentBotOS.PidRunning[process[0].pid]
 
         await replyMessage(f'{function(atEvent, process)}\n\nPid:{process.pid}', atEvent)
 
