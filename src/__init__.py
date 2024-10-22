@@ -23,33 +23,44 @@ class Command(TypedDict):
     params: list[int]
     processalControl: bool
     # function: Callable
+    of: None | str
 
 class Commands(Enum):
-    oscello: Command = {"name": "oscello", "params": [0], \
+    cello: Command = {"name": "cello", "params": [0], \
                         "processalControl": False, "function": DRVCommands.cello, "of": None}
 
-    osrepeat: Command = {"name": "osrepeat", "params": [1], \
+    repeat: Command = {"name": "repeat", "params": [1], \
                          "processalControl": False, "function": NormalCommands.repeat, "of": None}
 
-    oshelp: Command = {"name": "oshelp", "params": [0], \
+    help: Command = {"name": "help", "params": [0], \
                        "processalControl": False, "function": DRVCommands.userhelp, "of": None}
 
-    ossign: Command = {"name": "ossign", "params": [0, 1], \
+    sign: Command = {"name": "sign", "params": [0, 1], \
                        "processalControl": False, "function": SignCommands.sign, "of": None}
 
-    osenroll: Command = {"name": "osenroll", "params": [0], \
+    enroll: Command = {"name": "enroll", "params": [0], \
                          "processalControl": False, "function": SignCommands.enroll, "of": None}
 
-    osrename: Command = {"name": "osrename", "params": [1], \
+    rename: Command = {"name": "rename", "params": [1], \
                          "processalControl": False, "function": SignCommands.rename, "of": None}
 
     count: Command = {"name": "count", "params": [0, 1], \
                       "processalControl": 2.5, "function": DirectedCommands.count, "of": None}
 
     lessen: Command = {"name": "lessen", "params": [0], \
-                      "processalControl": False, "function": DirectedCommands.lessen, "of": "count"}
+                       "processalControl": False, "function": DirectedCommands.lessen, "of": "count"}
 
     switching: Command = {"name": "switching", "params": [1], \
                           "processalControl": False, "function": SystemCommands.switching, "of": None}
 
+    AAPs: Command = {"name": "AAPs", "params": [0], \
+                     "processalControl": False, "function": SystemCommands.allAvailableProcesses, "of": None}
+
+    DriftBottle: Command = {"name": "DriftBottle", "params": [1, 2], \
+                     "processalControl": False, "function": DriftBottleCommands.main, "of": None}
+
+    漂流瓶: Command = {"name": "漂流瓶", "params": [1, 2], \
+                     "processalControl": False, "function": DriftBottleCommands.main, "of": None}
+
 commandnames = [i.value["name"] for i in Commands]
+IsAdmin = SignCommands._isAdmin
