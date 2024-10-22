@@ -18,6 +18,13 @@ SilentBotOS = SilentBotOS()
 
 async def messageReply(message):
     atEvent = createAtEvent(message)
+    if type(atEvent) == str:
+        match atEvent:
+            case 'NoFindCommandError':
+                await message.reply(content='没有找到这条命令呢, 可以使用/help获取一些指令的信息')
+            case 'ParamsNumError':
+                await message.reply(content='命令参数错误了, 使用/命令名 -h查询语法，以便更方便的使用')
+        return
     await SilentBotOS.uploadAtEvent(atEvent)
 
 
